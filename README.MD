@@ -109,6 +109,18 @@ ssh -F /home/aerith/.ssh/config tx \
 
 支持的格式：AAC、FLAC、M4A、MP3、OGG、OPUS、WAV。
 
+### 新建曲库文件夹
+
+交互式菜单会在每次启动时递归扫描 `/opt/ts3audiobot/media/upload`，不局限于当前的三个歌单。可以在该目录下新建任意同级文件夹并上传音乐，例如：
+
+```text
+/opt/ts3audiobot/media/upload/My New Album/
+```
+
+再次启动菜单后，选择“按顶层文件夹”即可看到 `My New Album`；随后选择目标机器人和已有或新建歌单即可导入。菜单也支持按更细的专辑/艺人子文件夹或逐首选择。
+
+`scripts/import-local-music-queues.py` 是旧的固定分类工具，只适用于 `seed`、`FinalFantasy` 与 `Nier` 的预设规则。日常新增曲库请使用交互式菜单。
+
 ### 当前音乐库
 
 2026-09-07 已导入到 `LacusClyne` 的本地曲目：
