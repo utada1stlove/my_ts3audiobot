@@ -107,6 +107,18 @@ ssh tx 'chown ts3audiobot:ts3audiobot /opt/ts3audiobot/media/upload/my-song.mp3'
 
 仓库包含 [import-local-music-queues.py](scripts/import-local-music-queues.py)，用于直接把本地 WAV 文件写入指定机器人的既有歌单。它**不会调用 Web 入队接口、解析器或 `yt-dlp`**；轨道会直接指向 VPS 回环地址的媒体服务。
 
+### 交互式导入菜单
+
+日常导入推荐使用 [local-music-import-menu.sh](scripts/local-music-import-menu.sh)。它已安装在 VPS 的 `/opt/ts3audiobot/tools/`，直接执行：
+
+```bash
+ssh -F /home/aerith/.ssh/config tx '/opt/ts3audiobot/tools/local-music-import-menu.sh'
+```
+
+菜单会依次询问：目标机器人、已有歌单或新歌单、导入范围。导入范围可选择顶层文件夹、专辑/艺人子文件夹、逐首选择或全部支持的音频文件。编号支持逗号与范围，例如 `1,3-5`。
+
+脚本先显示将新增和因重复跳过的数量；只有输入 `IMPORT` 才会备份 `queues.json`、短暂停止服务、原子写入本地轨道并重新启动服务。默认媒体目录为 `/opt/ts3audiobot/media/upload`，支持 AAC、FLAC、M4A、MP3、OGG、OPUS 与 WAV；整个流程不经过 `yt-dlp`。
+
 脚本当前的分类规则适用于本次音乐库：`Gundam S.E.E.D. Music/` 进入 `seed`，`No Promises to Keep` 进入 `FinalFantasy`，其余 `SQUARE ENIX MUSIC/` WAV 进入 `Nier`。先上传并预演：
 
 ```bash

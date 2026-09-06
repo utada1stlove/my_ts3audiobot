@@ -22,6 +22,7 @@
 - 使用 `scripts/import-local-music-queues.py` 直接写入 `LacusClyne` 的既有歌单：`seed` 26 首、`FinalFantasy` 1 首、`Nier` 156 首。唯一的 Final Fantasy 曲目为 `No Promises to Keep`。
 - 导入前备份：`/opt/ts3audiobot/app/data/queues.json.before-local-import-20260907T022245Z`。
 - 导入时短暂停止服务，原子写入队列后恢复服务；所有 183 个条目均为 `sourceType: local`，未调用 Web 入队接口或 `yt-dlp`。日志确认 FFmpeg 已正常输出音频帧。
+- 交互式菜单已安装：`/opt/ts3audiobot/tools/local-music-import-menu.sh`。它支持选择机器人、歌单、顶层目录、专辑目录或单曲，并在确认前预演与去重。
 - 未部署 `/tmp/ts3audiobot-v0.1.0-source` 中的网页本地音乐库改造，也未替换运行 JAR。
 
 ## 复用方式
