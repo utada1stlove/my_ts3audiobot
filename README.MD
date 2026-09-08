@@ -105,7 +105,9 @@ ssh -F /home/aerith/.ssh/config tx \
 
 编号支持逗号和范围，例如 `1,3-5`。菜单会先显示选择数量、新增数量和已存在跳过数量；只有输入 `IMPORT` 才会执行实际导入。
 
-实际导入会自动执行以下安全步骤：备份 `queues.json`、短暂停止 `ts3audiobot.service`、原子写入队列、保留原有文件所有权并重新启动服务。相同歌单中已存在的相对路径会跳过，因此可以安全地重复运行以导入新文件。
+菜单启动时会读取 `/opt/ts3audiobot/app/data/ts3audiobot.db` 的真实机器人名单，只把它作为可导入目标。如果 `queues.json` 中存在数据库里没有的幽灵 bot key，脚本会列出它们，并在最终 `IMPORT` 确认后从 `queues`、`activePlaylists`、`playlistPositions` 中一并删除；请以确认前的输出为准。找不到或无法读取数据库时，脚本会保留旧行为并跳过清理。
+
+实际导入会自动执行以下安全步骤：备份 `queues.json`、短暂停止 `ts3audiobot.service`、原子写入队列、清理幽灵 bot、保留原有文件所有权并重新启动服务。相同歌单中已存在的相对路径会跳过，因此可以安全地重复运行以导入新文件。
 
 支持的格式：AAC、FLAC、M4A、MP3、OGG、OPUS、WAV。
 

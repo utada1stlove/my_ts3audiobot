@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ from urllib.parse import quote
 
 AUDIO_EXTENSIONS = {".aac", ".flac", ".m4a", ".mp3", ".ogg", ".opus", ".wav"}
 NUMBER_PREFIX = re.compile(r"^\d+\s+")
+GHOST_BOT_SECTIONS = ("queues", "activePlaylists", "playlistPositions")
 
 
 def prompt_one(title: str, choices: list[str], allow_new: bool = False) -> str:
@@ -143,6 +145,48 @@ def load_state(queue_file: Path) -> dict:
         return json.load(source)
 
 
+def load_real_bot_names(db_file: Path) -> set[str] | None:
+    if not db_file.is_file():
+        print(f"警告：未找到数据库 {db_file}，跳过幽灵机器人清理。")
+        return None
+    try:
+        with sqlite3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True) as connection:
+            rows = connection.execute("SELECT name FROM bots").fetchall()
+        return {row[0] for row in rows if isinstance(row[0], str)}
+    except (sqlite3.Error, OSError, ValueError) as exc:
+        print(f"警告：无法读取数据库 {db_file}，跳过幽灵机器人清理：{exc}")
+        return None
+
+
+def find_ghost_bot_keys(state: dict, real_bots: set[str]) -> list[str]:
+    ghosts: set[str] = set()
+    for section in GHOST_BOT_SECTIONS:
+        mapping = state.get(section)
+        if isinstance(mapping, dict):
+            ghosts.update(key for key in mapping if isinstance(key, str) and key not in real_bots)
+    return sorted(ghosts)
+
+
+def remove_ghost_bots(state: dict, real_bots: set[str]) -> list[str]:
+    ghost_keys = find_ghost_bot_keys(state, real_bots)
+    ghost_set = set(ghost_keys)
+    for section in GHOST_BOT_SECTIONS:
+        mapping = state.get(section)
+        if isinstance(mapping, dict):
+            for key in ghost_set:
+                mapping.pop(key, None)
+    return ghost_keys
+
+
+def print_ghost_bots(ghost_keys: list[str]) -> None:
+    if not ghost_keys:
+        return
+    print("\n检测到幽灵机器人，IMPORT 时会从队列文件中删除：")
+    for key in ghost_keys:
+        print(f"  - {key}")
+    print("删除范围：queues、activePlaylists、playlistPositions。")
+
+
 def write_atomically(queue_file: Path, state: dict, owner: os.stat_result) -> None:
     descriptor, temporary_name = tempfile.mkstemp(prefix=queue_file.name + ".", dir=queue_file.parent)
     try:
@@ -163,6 +207,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("/opt/ts3audiobot/media/upload"))
     parser.add_argument("--queue-file", type=Path, default=Path("/opt/ts3audiobot/app/data/queues.json"))
+    parser.add_argument("--db-file", type=Path, default=Path("/opt/ts3audiobot/app/data/ts3audiobot.db"))
     parser.add_argument("--service", default="ts3audiobot.service")
     parser.add_argument("--media-url", default="http://127.0.0.1:18080/")
     parser.add_argument("--dry-run", action="store_true", help="Show the selection preview without writing or stopping the service.")
@@ -174,7 +219,16 @@ def main() -> int:
         raise SystemExit("找不到音乐目录或队列文件。")
     state = load_state(queue_file)
     queues = state.setdefault("queues", {})
-    bots = sorted(queues)
+    ghost_keys: list[str] = []
+    real_bots = load_real_bot_names(args.db_file.resolve())
+    if real_bots is None:
+        bots = sorted(queues)
+    else:
+        ghost_keys = find_ghost_bot_keys(state, real_bots)
+        print_ghost_bots(ghost_keys)
+        if not real_bots:
+            raise SystemExit("ts3audiobot.db 中没有机器人。请先在网页创建机器人。")
+        bots = sorted(real_bots)
     if not bots:
         raise SystemExit("队列文件中没有机器人。请先在网页创建机器人。")
     bot_id = prompt_one("选择机器人", bots)
@@ -202,14 +256,24 @@ def main() -> int:
         print(f"  + {path}")
     if len(additions) > 10:
         print(f"  ... 另有 {len(additions) - 10} 首")
-    if args.dry_run or not additions:
+    if args.dry_run:
         print("预演结束，未修改队列。")
+        return 0
+    if not additions and not ghost_keys:
+        print("没有新增，未修改队列。")
         return 0
     if os.geteuid() != 0:
         raise SystemExit("实际导入需要 root 权限。请使用 sudo 运行此脚本。")
-    if input("输入 IMPORT 确认写入并短暂停止机器人服务：").strip() != "IMPORT":
+    if ghost_keys:
+        print(f"本次写入还会删除 {len(ghost_keys)} 个幽灵机器人。")
+        confirm_text = "输入 IMPORT 确认写入并短暂停止机器人服务（将删除幽灵机器人）："
+    else:
+        confirm_text = "输入 IMPORT 确认写入并短暂停止机器人服务："
+    if input(confirm_text).strip() != "IMPORT":
         raise SystemExit("未确认，未修改队列。")
 
+    if ghost_keys:
+        remove_ghost_bots(state, real_bots)
     for path in additions:
         destination.append(track_item(bot_id, playlist_id, path, args.media_url))
     original_metadata = queue_file.stat()
@@ -225,7 +289,10 @@ def main() -> int:
         if service_stopped:
             subprocess.run(["systemctl", "start", args.service], check=False)
     subprocess.run(["systemctl", "is-active", "--quiet", args.service], check=True)
-    print(f"导入完成：新增 {len(additions)} 首。备份：{backup}")
+    if ghost_keys:
+        print(f"导入完成：新增 {len(additions)} 首，删除幽灵机器人 {len(ghost_keys)} 个。备份：{backup}")
+    else:
+        print(f"导入完成：新增 {len(additions)} 首。备份：{backup}")
     return 0
 
 
