@@ -187,6 +187,11 @@ ssh -L 58913:127.0.0.1:58913 your-user@your-server
 
 ## 常用配置与排障
 
+已确认故障、日志判读和安全恢复流程见
+[TROUBLESHOOTING_CN.md](TROUBLESHOOTING_CN.md)。特别是后台显示播放但频道
+无声时，应先检查日志是否包含 `too many clones already connected`、
+`noConn` 或 `opusBytes=0`，不要只查看 TOML。
+
 发行包的配置模板支持以下常用项：
 
 | 配置项 | 用途 |
@@ -205,6 +210,8 @@ ssh -L 58913:127.0.0.1:58913 your-user@your-server
 3. FFmpeg/yt-dlp 找不到时，确认发行包内文件未被删除；必要时把可执行文件放入 PATH，或在配置中给出绝对路径。
 4. 无法打开网页时，先在服务器运行 `curl -I http://127.0.0.1:58913`，再检查 SSH 隧道而非立即开放防火墙。
 5. 机器人无法进频道时，检查 TeamSpeak 地址、端口、频道路径/密码与服务器权限。
+6. 后台正在播放但频道无声时，按 [TROUBLESHOOTING_CN.md](TROUBLESHOOTING_CN.md)
+   检查重复客户端克隆和 `noConn`。
 
 ## 持续运行
 

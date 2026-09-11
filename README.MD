@@ -2,7 +2,7 @@
 
 这是一个面向个人 TeamSpeak 3 服务器的部署与运维仓库。它固定使用 [ArthurZhu1992/TS3AudioBot](https://github.com/ArthurZhu1992/TS3AudioBot) `v0.1.0`，提供自动安装、Web 控制说明，以及不经过 `yt-dlp` 的本地音乐批量导入工具。
 
-详细安装、升级和排障步骤见 [INSTALL_GUIDE_CN.md](INSTALL_GUIDE_CN.md)。本文是日常使用的入口。
+详细安装和升级步骤见 [INSTALL_GUIDE_CN.md](INSTALL_GUIDE_CN.md)，已确认故障与恢复流程见 [TROUBLESHOOTING_CN.md](TROUBLESHOOTING_CN.md)。本文是日常使用的入口。
 
 ## 当前能力
 
@@ -160,6 +160,7 @@ scripts/import-local-music-queues.py   按预设目录批量导入脚本
 scripts/local-music-import-menu.sh     交互式导入菜单启动器
 scripts/local-music-import-menu.py     交互式导入菜单实现
 INSTALL_GUIDE_CN.md                    完整安装、配置与排障指南
+TROUBLESHOOTING_CN.md                  已确认故障、判断依据与恢复流程
 planning/                              部署与功能实施记录
 ```
 
