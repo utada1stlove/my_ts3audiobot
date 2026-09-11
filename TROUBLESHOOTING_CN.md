@@ -117,3 +117,111 @@ TeamSpeak 中确认机器人所在频道、机器人音量、频道权限和你�
 
 之前若看到旧机器人名称残留在面板或队列中，不能仅凭“像幽灵”就判定为
 同一问题。应以数据库、`queues.json` 和 TeamSpeak 实时日志分别确认。
+
+## 进度条到头了，声音却还在继续
+
+### 症状
+
+- 播放队列里加入的是 YouTube Music 歌单链接
+  （`https://music.youtube.com/playlist?list=...`）。
+- Web 面板的进度条走到这首歌的末尾后不再前进，歌名也一直停留在第一首。
+- 频道里的声音没有停，听起来像 YouTube 的“自动播放”接着放了下一首。
+- 日志被这类内容刷屏：
+
+```text
+Application provided invalid, non monotonically increasing dts to muxer in stream 0
+[in#0/matroska,webm @ ...] Unknown element 18538067 at pos. ... considered as invalid data
+```
+
+同时 `[Audio] stats` 里 `dropped=0 noConn=0 encodeFail=0`，说明音频链路本身是
+健康的，这不属于上一节的“无声故障”。
+
+### 已确认的根因
+
+不是 YouTube 网页的自动播放，是我们自己把整张歌单灌进了同一条管道。
+
+播放器的取流命令形如：
+
+```text
+yt-dlp -q --no-warnings --no-playlist -f bestaudio -o - <sourceId>
+```
+
+`--no-playlist` 只对“同时带视频和歌单”的 watch 链接生效。当 `sourceId` 本身就
+是 `.../playlist?list=...` 时，这个参数不起作用，yt-dlp 会把歌单里每一首歌依次
+下载并**串行写入同一个 stdout**。可以直接验证：
+
+```bash
+/opt/ts3audiobot/app/yt-dlp -q --no-playlist -f bestaudio --simulate -v <playlist-url> \
+  | grep -c 'Downloading 1 format'
+```
+
+歌单有 9 首就会输出 9。
+
+FFmpeg 只在管道开头读到一次容器头，因此日志里的 `Duration: 00:06:53.28` 永远
+是第一首的长度；后续歌曲的字节流继续涌入，触发 `non monotonically increasing dts`
+和 `Unknown element ... invalid data`。进度条按第一首的 413 秒计数，走完就停住，
+而声音来自管道里剩下的八首，于是就形同“自动播放”。
+
+伴生现象：
+
+- `queues.json` 中该条目的 `title`、`durationMs`、`coverUrl` 全为空，因为加入歌单
+  链接时没有可对应的单曲元数据。
+- 队列的 `playlistPosition` 不会推进，播放器没有单曲结束事件可依。
+- 面板上的 seek 会对整条拼接流生效，一次拖拽可能直接跳进第 2、3 首歌中间。
+
+### 恢复办法
+
+把队列内容换成单曲链接，即 `https://music.youtube.com/watch?v=<videoId>`，每首歌
+一条。展开方法：
+
+```bash
+/opt/ts3audiobot/app/yt-dlp --no-warnings --flat-playlist -J <playlist-url>
+```
+
+取 `entries[].id` 逐个拼成 watch 链接。改完必须重启服务，队列只在启动时读取一次：
+
+```bash
+ssh datawave_hk systemctl stop ts3audiobot.service
+ssh datawave_hk "cp -a /opt/ts3audiobot/app/data/queues.json /opt/ts3audiobot/app/data/queues.json.bak-$(date +%Y%m%d-%H%M%S)"
+# 编辑 queues.json
+ssh datawave_hk systemctl start ts3audiobot.service
+```
+
+`ts3audiobot-media.service` 只是本地上传目录的静态 HTTP 服务，改队列不需要重启它。
+
+### 手改 queues.json 的硬规则
+
+`QueueService` 的快照加载对字段是严格模式，一条脏数据会毁掉整个队列：
+
+- `QueueItem` 只认 6 个字段：`botId`、`addedAt`、`addedBy`、`id`、`playlistId`、
+  `track`。多出任何键都会抛 `UnrecognizedPropertyException`，例如自行加一个
+  `order` 用于排序。
+- 加载失败后应用不会退出，而是**以空队列启动并把文件覆写成**
+  `{"queues":{},"activePlaylists":{"<bot>":"default"},"playlistPositions":{}}`，
+  原队列内容就此丢失，且只留下一条 WARN。日志关键字：
+  `Failed to load queue snapshot from data/queues.json`。
+- 因此改文件前先 `cp -a` 备份，改完启动后立刻回读文件确认条目还在。
+- 写入前先停服务。应用在关闭时会回写快照，边跑边改会被覆盖。
+- `title`、`durationMs`、`coverUrl` 由解析器在播放时填，持久化时会被写回空值，
+  这是正常行为，不是数据丢失。
+- 队列的 bot key 必须与 `ts3audiobot.db` 的 `bots.name` 一致，否则就是上一节的
+  队列幽灵 key。
+
+### 验收标准
+
+```bash
+ssh datawave_hk 'journalctl -u ts3audiobot.service --since -15m --no-pager --output cat | grep -E "Audio. play track=|Input. started pid|Duration: |non monotonically"'
+```
+
+- `[Input] started` 的命令末尾是 `/watch?v=`，不是 `/playlist?list=`。
+- 一首歌唱完时出现新的 `[Audio] play track=` 且歌名发生变化。
+- `playlistPosition` 随切歌递增。
+- 不再出现 `non monotonically increasing dts`。
+
+### 待上游修复
+
+当前只能靠“不要往队列里放歌单链接”规避，代码侧还需要两件事：
+
+1. 入队时识别歌单链接，展开成单曲条目后再写队列。
+2. 取流时只允许单曲标识，必要时给 yt-dlp 加 `--playlist-items 1`，杜绝一条管道
+   承载多首歌。

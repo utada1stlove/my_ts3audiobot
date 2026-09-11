@@ -82,9 +82,54 @@ cleanup() {
 }
 trap cleanup EXIT
 
+install_java21() {
+  if java -version >/dev/null 2>&1; then
+    local java_version
+    java_version=$(java -version 2>&1 | head -1 | sed -E 's/.*version "([0-9]+).*/\1/')
+    if [[ "$java_version" =~ ^(2[1-9]|[3-9][0-9]|[1-9][0-9]{2,})$ ]]; then
+      return 0
+    fi
+  fi
+
+  if apt-cache policy openjdk-21-jre-headless 2>/dev/null | awk '$1 == "Candidate:" && $2 != "(none)" { found=1 } END { exit !found }'; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openjdk-21-jre-headless
+    return 0
+  fi
+
+  echo "OpenJDK 21 is not packaged for this Debian release; installing Eclipse Temurin 21 JRE..."
+  case "$(uname -m)" in
+    x86_64) ADOPTIUM_ARCH="x64" ;;
+    aarch64) ADOPTIUM_ARCH="aarch64" ;;
+    *) die "Unsupported CPU architecture for Temurin: $(uname -m)" ;;
+  esac
+
+  local java_tar="$TEMP_DIR/temurin21-jre.tar.gz"
+  local java_meta="$TEMP_DIR/temurin21.json"
+  local java_link
+  local java_sha
+  curl --fail --location --retry 3 --retry-delay 2 --silent --show-error --output "$java_meta" \
+    "https://api.adoptium.net/v3/assets/latest/21/hotspot?architecture=${ADOPTIUM_ARCH}&image_type=jre&os=linux&vendor=eclipse"
+  java_link=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print([x["binary"]["package"]["link"] for x in d if x["binary"]["package"]["name"].endswith(".tar.gz")][0])' "$java_meta") || die "Failed to resolve Temurin 21 JRE download link"
+  java_sha=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print([x["binary"]["package"]["checksum"] for x in d if x["binary"]["package"]["name"].endswith(".tar.gz")][0])' "$java_meta") || die "Failed to resolve Temurin 21 JRE checksum"
+  [[ -n "$java_link" && -n "$java_sha" ]] || die "Temurin 21 JRE metadata was incomplete"
+
+  curl --fail --location --retry 3 --retry-delay 2 --output "$java_tar" "$java_link"
+  printf '%s  %s\n' "$java_sha" "$java_tar" | sha256sum --check --status || die "Temurin 21 JRE SHA-256 did not match"
+  mkdir -p /opt
+  [[ ! -e /opt/temurin21 ]] || die "/opt/temurin21 already exists; refusing to overwrite"
+  tar -xzf "$java_tar" -C "$TEMP_DIR"
+  local extracted_java
+  extracted_java=$(find "$TEMP_DIR" -maxdepth 1 -type d -name 'jdk-21*' | head -1)
+  [[ -n "$extracted_java" && -x "$extracted_java/bin/java" ]] || die "Temurin 21 JRE extraction failed"
+  mv "$extracted_java" /opt/temurin21
+  ln -sfn /opt/temurin21/bin/java /usr/local/bin/java
+  hash -r 2>/dev/null || true
+}
+
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openjdk-21-jre-headless curl python3 unzip ca-certificates
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl python3 unzip ca-certificates
+  install_java21
 else
   die "Only Debian/Ubuntu systems using apt-get are currently supported"
 fi
